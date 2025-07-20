@@ -1,0 +1,6 @@
+com\arakamitech\arakamimessage\client\ChatClient.class
+com\arakamitech\arakamimessage\view\ChatWindow$1.class
+com\arakamitech\arakamimessage\view\ChatWindow$2.class
+com\arakamitech\arakamimessage\view\ChatWindow.class
+com\arakamitech\arakamimessage\client\receiver\FileReceiver.class
+com\arakamitech\arakamimessage\client\ChatClient$UserListRenderer.class
