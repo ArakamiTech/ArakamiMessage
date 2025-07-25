@@ -2,18 +2,19 @@ package com.arakamitech.arakamimessage.client;
 
 import com.arakamitech.arakamimessage.client.receiver.FileReceiver;
 import com.arakamitech.arakamimessage.view.ChatWindow;
+
 import javax.swing.*;
 import java.awt.*;
 import java.io.*;
-import java.net.*;
+import java.net.Socket;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class ChatClient {
 
-    private static final String SERVERADDRES = "https://arakamimessageserver.onrender.com";
-    private static final int SERVERPORT = 12345;
+    private static final String SERVER_ADDRESS = "127.0.0.1";
+    private static final int SERVER_PORT = 12345;
     private final String nickname;
     private final Socket socket;
     private final DataInputStream in;
@@ -24,13 +25,18 @@ public class ChatClient {
     public ChatClient() throws IOException {
         nickname = JOptionPane.showInputDialog("Ingresa tu nickname:");
 
-        socket = new Socket(SERVERADDRES, SERVERPORT);
+        if (nickname == null || nickname.trim().isEmpty()) {
+            showError("No se ingresó un nickname. La aplicación se cerrará.");
+            System.exit(0);
+        }
+
+        socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
         in = new DataInputStream(socket.getInputStream());
         out = new DataOutputStream(socket.getOutputStream());
 
         FileReceiver.cleanTempFolder();
         buildGUI();
-        new Thread(() -> listen()).start();
+        new Thread(this::listen).start();
 
         String response = in.readUTF();
         if ("SUBMITNICK".equals(response)) {
@@ -40,16 +46,15 @@ public class ChatClient {
     }
 
     private void buildGUI() {
-        JFrame frame;
-        frame = new JFrame("ArakamiMessage - " + nickname);
+        var frame = new JFrame("ArakamiMessage - " + nickname);
         userListModel = new DefaultListModel<>();
-        JList<String> userList = new JList<>(userListModel);
+        var userList = new JList<>(userListModel);
 
         userList.setCellRenderer(new UserListRenderer());
 
         userList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
-                String selectedUser = userList.getSelectedValue();
+                var selectedUser = userList.getSelectedValue();
                 if (selectedUser != null) {
                     openChatWindow(selectedUser);
                 }
@@ -58,23 +63,20 @@ public class ChatClient {
 
         frame.add(new JScrollPane(userList), BorderLayout.CENTER);
         frame.setSize(300, 400);
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
         frame.setVisible(true);
     }
 
     private void openChatWindow(String user) {
-        if (!chatWindows.containsKey(user)) {
-            ChatWindow cw = new ChatWindow(user, out, nickname);
-            chatWindows.put(user, cw);
-        }
+        chatWindows.computeIfAbsent(user, u -> new ChatWindow(u, out, nickname));
     }
 
     private void listen() {
         try {
             while (true) {
-                String cmd = in.readUTF();
+                var cmd = in.readUTF();
 
-                if (null != cmd) {
+                if (cmd != null) {
                     switch (cmd) {
                         case "TEXT" -> caseText();
                         case "MSGFROM" -> caseMsgFrom();
@@ -84,18 +86,18 @@ public class ChatClient {
                 }
             }
         } catch (IOException e) {
-            System.out.println("Conexión cerrada.");
+            showError("Conexión cerrada.");
         }
     }
 
     public void caseText() {
         try {
-            String msg = in.readUTF();
+            var msg = in.readUTF();
             if (msg.startsWith("USERLIST:")) {
-                String[] users = msg.substring(9).split(",");
+                var users = msg.substring(9).split(",");
                 SwingUtilities.invokeLater(() -> {
                     userListModel.clear();
-                    for (String u : users) {
+                    for (var u : users) {
                         if (!u.equals(nickname) && !u.isEmpty()) {
                             userListModel.addElement(u);
                         }
@@ -103,65 +105,70 @@ public class ChatClient {
                 });
             }
         } catch (IOException ex) {
-            Logger.getLogger(ChatClient.class.getName()).log(Level.SEVERE, null, ex);
+            logError(ex, "Error recibiendo lista de usuarios");
         }
     }
 
     public void caseMsgFrom() {
         try {
-            String msg = in.readUTF();
-            String[] parts = msg.split(":", 2);
-            String from = parts[0];
-            String message = parts[1];
-            ChatWindow cw = chatWindows.get(from);
-            if (cw == null) {
-                cw = new ChatWindow(from, out, nickname);
-                chatWindows.put(from, cw);
-            }
+            var msg = in.readUTF();
+            var parts = msg.split(":", 2);
+            var from = parts[0];
+            var message = parts[1];
+
+            var cw = chatWindows.computeIfAbsent(from, u -> new ChatWindow(from, out, nickname));
             cw.appendMessage(from + ": " + message);
         } catch (IOException ex) {
-            Logger.getLogger(ChatClient.class.getName()).log(Level.SEVERE, null, ex);
+            logError(ex, "Error recibiendo mensaje");
         }
     }
 
     public void caseSendFile() {
         try {
-            String from = in.readUTF();
-            String filename = in.readUTF();
-            long size = in.readLong();
-            File tempFile = FileReceiver.receiveFile(in, filename, size, from);
+            var from = in.readUTF();
+            var filename = in.readUTF();
+            var size = in.readLong();
+            var tempFile = FileReceiver.receiveFile(in, filename, size, from);
             if (tempFile != null) {
-                ChatWindow cw = chatWindows.get(from);
-                if (cw == null) {
-                    cw = new ChatWindow(from, out, nickname);
-                    chatWindows.put(from, cw);
-                }
+                var cw = chatWindows.computeIfAbsent(from, u -> new ChatWindow(from, out, nickname));
                 cw.appendReceivedFileMessage(from, filename, tempFile);
             }
         } catch (IOException ex) {
-            Logger.getLogger(ChatClient.class.getName()).log(Level.SEVERE, null, ex);
+            logError(ex, "Error recibiendo archivo");
         }
     }
 
-    public static void main(String[] args) throws Exception {
-        new ChatClient();
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> {
+            try {
+                new ChatClient();
+            } catch (IOException e) {
+                showError("No se pudo conectar al servidor: " + e.getMessage());
+            }
+        });
+    }
+
+    private static void showError(String message) {
+        JOptionPane.showMessageDialog(null, message, "Error", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private static void logError(Exception ex, String context) {
+        Logger.getLogger(ChatClient.class.getName()).log(Level.SEVERE, context, ex);
+        showError(context + ": " + ex.getMessage());
     }
 
     class UserListRenderer extends DefaultListCellRenderer {
 
         private final Icon onlineIcon = new ImageIcon("onlines.png");
-        private final Icon offlineIcon = new ImageIcon("offlines.png");
 
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                boolean isSelected, boolean cellHasFocus) {
-            JLabel label = (JLabel) super.getListCellRendererComponent(
-                    list, value, index, isSelected, cellHasFocus);
-            label.setIcon(onlineIcon); // en esta versión siempre online
+                                                      boolean isSelected, boolean cellHasFocus) {
+            var label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            label.setIcon(onlineIcon);
             label.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
             label.setFont(new Font("Segoe UI", Font.PLAIN, 14));
             return label;
         }
     }
-
 }
